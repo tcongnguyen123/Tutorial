@@ -11,21 +11,21 @@ class BlogSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Blog
-        fields = ['id', 'title','description', 'content','author' ,'created_at','updated_at', 'deleted_at', 'is_deleted','is_published']
-        read_only_fields = ['id', 'created_at', 'updated_at', 'deleted_at']    
+        fields = ['id', 'title','description', 'content','author' ,'created_at','updated_at', 'trash_deleted_at', 'is_deleted','is_published']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'trash_deleted_at']    
     def get_is_deleted(self, obj):
-        return obj.deleted_at is not None  
+        return obj.trash_deleted_at is not None  
 class BlogSerializers(serializers.ModelSerializer):
     #is_deleted là một trường ảo, không có trong model Blog và không có trong cơ sở dữ liệu
     is_deleted = serializers.SerializerMethodField()
     class Meta:
         model = Blog
       #  fields = ('id', 'title', 'description', 'created_at', 'author','deleted_at')
-        fields = ['id', 'title', 'content','author' ,'created_at','updated_at', 'deleted_at', 'is_deleted','is_published']
+        fields = ['id', 'title', 'content','author' ,'created_at','updated_at', 'trash_deleted_at', 'is_deleted','is_published']
       # chỉ được đọc không được chỉnh sửa       
-        read_only_fields = ['id', 'created_at', 'updated_at', 'deleted_at'] 
+        read_only_fields = ['id', 'created_at', 'updated_at', 'trash_deleted_at'] 
     def get_is_deleted(self, obj):
-          return obj.deleted_at is not None  
+          return obj.trash_deleted_at is not None  
     
 class DeletedLogSerializer(serializers.ModelSerializer):
 

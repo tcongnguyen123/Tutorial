@@ -6,10 +6,7 @@ from api.models.deleted_log import DeletedLog
 from api.models.updated_log import LogUpdated
 from .serializers import BlogSerializer,DeletedLogSerializer,LogUpdatedSerializer
 from rest_framework import status
-from rest_framework.decorators import api_view
-from datetime import datetime
 from django.utils import timezone
-from rest_framework.viewsets import ModelViewSet
 from .pagination import StandardPagination
 from copy import deepcopy
 # Create your views here.
@@ -23,9 +20,9 @@ class TestView(ViewSet):
 
 class BlogViewSet(ViewSet):
     # lấy post theo id
-    def get_blog_id(self,request, pk):
+    def get_blog_id(self,request, id):
         try:
-            blog = Blog.objects.get(pk=pk)
+            blog = Blog.objects.get(id=id)
         except Blog.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -37,21 +34,61 @@ class BlogViewSet(ViewSet):
         serializer = BlogSerializer(blogs, many=True)
         return Response(serializer.data)
     #thêm post mới với nháp (chưa được public)
-    def create(request):
-        serializer = BlogSerializer(data=request.data)    
+    #__init__() got multiple values for argument 'status'
+    # solution là do reponse chưa 3 tham số.
+    # create() takes 1 positional argument but 2 were given
+    # solution là thêm self vào trước request
+    def create(self,request):
+        serializer = BlogSerializer(data=request.data)
+        # Tạo bản sao để lưu lại trạng thái trước khi update
+        # tạo blog 
+        blog = Blog()
+        current_state = deepcopy(blog)
+        # Chuyển đổi dữ liệu từ request.data thành blog object
+        serializer = BlogSerializer(blog, data=request.data)
         if serializer.is_valid():
+                        # danh sách các trường được update
+            updated_fields = []
+            # dict chứa giá trị cũ của các trường được update
+            old_value = {}
+            # dict chứa giá trị mới của các trường được update
+            new_value = {}
+            # key là tên trường, value là giá trị của trường
+            # serializer.validated_data là dict chứa dữ liệu đã được validate bao gồm id, title, content, author 
+            for key, value in serializer.validated_data.items():
+                # getattr(blog, key) là giá trị của trường key trong đối tượng blog
+                # value là giá trị của trường key trong request.data
+                if getattr(blog, key) != value:
+                    # nếu giá trị của trường key trong đối tượng blog khác với giá trị của trường key trong request.data
+                    if key not in updated_fields:
+                        # nếu key được update thì thêm vào updated_fields
+                        updated_fields.append(key)
+                        # lưu giá trị cũ và giá trị mới của trường key
+                        old_value[key] = getattr(current_state, key)
+                        new_value[key] = value
+
             serializer.save(is_published=False)
-            return Response({'Post has been created.'},serializer.data, status=status.HTTP_201_CREATED)
+            # tạo log khi update gồm các trường được update, giá trị cũ và giá trị mới và id của post
+            LogUpdated.objects.create(
+                post=blog,
+                action='created',
+                updated_fields=updated_fields,
+                old_value=old_value,
+                new_value=new_value,
+                # updated_by=request.user.username,
+            )
+            
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     # public post 
-    def publish_post(self,request, pk_1): # nhận vào req và khóa
+    def publish_post(self,request, id_1): # nhận vào req và khóa
         try:
-            blog = Blog.objects.get(pk=pk_1)   # lấy dữ liệu theo khóa
+            blog = Blog.objects.get(id=id_1)   # lấy dữ liệu theo khóa
         except Blog.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
         #nêu is_deleted = true thì không cho public
-        if blog.deleted_at is not None:
+        if blog.trash_deleted_at is not None:
             return Response({'Post has been deleted.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Cập nhật bài viết để xuất bản
@@ -59,9 +96,9 @@ class BlogViewSet(ViewSet):
         blog.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
     #unpublic post
-    def unpublic_post(self,request, pk): # nhận vào req và khóa
+    def unpublic_post(self,request, id): # nhận vào req và khóa
         try:
-            blog = Blog.objects.get(pk=pk)   # lấy dữ liệu theo khóa
+            blog = Blog.objects.get(id=id)   # lấy dữ liệu theo khóa
         except Blog.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
         #nêu is_published = true thì không cho public
@@ -94,7 +131,7 @@ class BlogViewSet(ViewSet):
         except Blog.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
-        blog.deleted_at = timezone.now()
+        blog.trash_deleted_at = timezone.now()
         blog.save()
 
         # Lưu log khi xóa mềm
@@ -108,7 +145,7 @@ class BlogViewSet(ViewSet):
         except Blog.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
-        blog.deleted_at = None
+        blog.trash_deleted_at = None
         blog.save()
         DeletedLog.objects.create(post=blog, action='restored', restored_by=blog.author)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -117,14 +154,16 @@ class BlogViewSet(ViewSet):
         try:
             blog = Blog.objects.get(id=id)
         except Blog.DoesNotExist:
-            return Response(status=status.HTTP_404_NOT_FOUND)
-        if blog.deleted_at is not None:
-            return Response(status=status.HTTP_404_NOT_FOUND, data={'message': 'Bài viết đã bị xóa trước đó'})
+            return Response(status=status.HTTP_404_NOT_FOUND,data={'message': 'Bài viết không tồn tại'})
+        
+        # if blog.trash_deleted_at is not None:
+        #     return Response(status=status.HTTP_404_NOT_FOUND, data={'message': 'Bài viết không tồn tại'})
         blog.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(status=status.HTTP_204_NO_CONTENT,data={'message': 'Bài viết đã bị xóa'})
 
     # tìm kiếm post theo author
     def search_blog_by_author(self, request, author):
+        # author_icontains là tìm kiếm theo author
         blogs = Blog.objects.filter(author__icontains=author)
         serializer = BlogSerializer(blogs, many=True)
         return Response(serializer.data)
@@ -145,12 +184,12 @@ class BlogViewSet(ViewSet):
         return Response(serializer.data)
 
     # lấy deleted log theo post
-    def get_deleted_log_by_post(self, request, pk):
-        deleted_logs = DeletedLog.objects.filter(post=pk)
+    def get_deleted_log_by_post(self, request, id):
+        deleted_logs = DeletedLog.objects.filter(post=id)
         serializer = DeletedLogSerializer(deleted_logs, many=True)
         return Response(serializer.data)
-    def get_updated_log_by_post(self, request, pk):
-        updated_logs = LogUpdated.objects.filter(post=pk)
+    def get_updated_log_by_post(self, request, id):
+        updated_logs = LogUpdated.objects.filter(post=id)
         serializer = LogUpdatedSerializer(updated_logs, many=True)
         return Response(serializer.data)
     
@@ -191,7 +230,7 @@ class BlogViewSet(ViewSet):
                         # lưu giá trị cũ và giá trị mới của trường key
                         old_value[key] = getattr(current_state, key)
                         new_value[key] = value
-
+            print(serializer)
             serializer.save()
             # tạo log khi update gồm các trường được update, giá trị cũ và giá trị mới và id của post
             LogUpdated.objects.create(
@@ -251,7 +290,7 @@ class BlogViewSet(ViewSet):
 # @api_view(['PUT'])
 # def publish_post(request, id):
 #     try:
-#         Blog = Blog.objects.get(pk=id)
+#         Blog = Blog.objects.get(id=id)
 #     except Blog.DoesNotExist:
 #         return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -262,9 +301,9 @@ class BlogViewSet(ViewSet):
 #     return Response(status=status.HTTP_204_NO_CONTENT)
 # # lấy 1 post theo id
 # @api_view(['GET'])
-# def get_blog(request, pk):
+# def get_blog(request, id):
 #     try:
-#         blog = Blog.objects.get(pk=pk)
+#         blog = Blog.objects.get(id=id)
 #     except Blog.DoesNotExist:
 #         return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -274,9 +313,9 @@ class BlogViewSet(ViewSet):
 # # cập nhật 1 post bằng id
 
 # @api_view(['PUT'])
-# def update_blog(request, pk): # nhận vào req và khóa
+# def update_blog(request, id): # nhận vào req và khóa
 #     try:
-#         blog = Blog.objects.get(pk=pk)   # lấy dữ liệu theo khóa
+#         blog = Blog.objects.get(id=id)   # lấy dữ liệu theo khóa
 #     except Blog.DoesNotExist:
 #         return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -288,9 +327,9 @@ class BlogViewSet(ViewSet):
 
 # # xóa 1 post bằng id
 # @api_view(['DELETE'])
-# def delete_blog(request, pk):
+# def delete_blog(request, id):
 #     try:
-#         blog = Blog.objects.get(pk=pk)
+#         blog = Blog.objects.get(id=id)
 #     except Blog.DoesNotExist:
 #         return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -365,7 +404,8 @@ class BlogViewSet(ViewSet):
     #         return Response(status=status.HTTP_404_NOT_FOUND)
     #     UpdatedLog.objects.create(post=blog, action='updated', updated_by= blog.author)
         # lấy delete log
-    # def get_deleted_log(self, request,pk):
+    # def get_deleted_log(self, request,id):
     #     deleted_logs = DeletedLog.objects.all()
     #     serializer = DeletedLogSerializer(deleted_logs, many=True)
     #     return Response(serializer.data)
+    
