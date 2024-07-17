@@ -30,6 +30,7 @@ class BlogViewSet(ViewSet):
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         serializer = BlogSerializer(blog)
+        print("aaaa")
         return Response(serializer.data)
     # lấy tất cả post(blog)    
     def list(self, request):
