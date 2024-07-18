@@ -26,6 +26,7 @@ class BlogViewSet(ViewSet):
     def get_blog_id(self,request, pk):
         try:
             blog = Blog.objects.get(pk=pk)
+            print("aaa")
         except Blog.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
